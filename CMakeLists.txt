@@ -31,15 +31,16 @@ set(VERBOSE_NAME "GPS_Odometer")
 set(COMMON_NAME "GPS Odometer")
 set(TITLE_NAME "GPSODOMETER")
 set(PACKAGE_CONTACT "LennartG")
-set(PACKAGE "gps-odometer")
+#set(PACKAGE "gps-odometer")
+set(PACKAGE "gpsodometer")
 set(SHORT_DESCRIPTION "GPS Odometer plugin for OpenCPN")
 set(LONG_DESCRIPTION "GPS controlled Dashboard based Odometer plugin for OpenCPN, displays GPS calculated Log and Trip information")
 
 set(VERSION_MAJOR "0")
-set(VERSION_MINOR "2")
-set(VERSION_PATCH "4")
-set(VERSION_TWEAK "1")
-set(VERSION_DATE "26/10/2020")
+set(VERSION_MINOR "3")
+set(VERSION_PATCH "0")
+set(VERSION_TWEAK "2")
+set(VERSION_DATE "10/11/2020")
 set(OCPN_MIN_VERSION "ov50")
 set(OCPN_API_VERSION_MAJOR "1")
 set(OCPN_API_VERSION_MINOR "16")
@@ -130,10 +131,16 @@ include("PluginConfigure")
 ## GPS Odometer plugin does not understand/use this definition
 ##add_definitions(-DUSE_S57)
 
+# From master branch - is this working? necessary?
 ## GPS Odometer plugin uses SVG for toolbar icons
-add_definitions(-DPLUGIN_USE_SVG)
 
-SET(SRC_ODOMETER
+IF(PLUGIN_USE_SVG)
+    MESSAGE(STATUS "${CMLOC}SVG support enabled...")
+    ADD_DEFINITIONS(-DPLUGIN_USE_SVG)
+ENDIF(PLUGIN_USE_SVG)
+
+
+SET(SRCS
     src/odometer_pi.cpp
     src/iirfilter.cpp
     src/instrument.cpp
@@ -141,10 +148,6 @@ SET(SRC_ODOMETER
     src/dial.cpp
     src/speedometer.cpp
     src/icons.cpp
-    api-16/ocpn_plugin.h
-)
-
-SET(SRC_NMEA0183
     src/nmea0183/nmea0183.cpp
     src/nmea0183/response.cpp
     src/nmea0183/sentence.cpp
@@ -160,6 +163,7 @@ SET(SRC_NMEA0183
 )
 
 SET(HDRS
+#    api-16/ocpn_plugin.h
     src/button.h
 	src/dial.h
 	src/icons.h
@@ -185,7 +189,7 @@ INCLUDE_DIRECTORIES(BEFORE ${CMAKE_SOURCE_DIR}/include)
 ## SET(EXTSRC  ${EXTSRC}   etc   Can be in an if statement as below
 ##
 ##==========================================================================
-ADD_LIBRARY(${PACKAGE_NAME} SHARED ${SRC_ODOMETER} ${SRC_NMEA0183} ${HDRS} )
+ADD_LIBRARY(${PACKAGE_NAME} SHARED ${SRCS} ${HDRS} )
 ##==========================================================================
 
 add_definitions(-DTIXML_USE_STL)

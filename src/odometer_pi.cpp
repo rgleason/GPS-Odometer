@@ -87,6 +87,7 @@ extern "C" DECL_EXP void destroy_pi(opencpn_plugin* p) {
     delete p;
 }
 
+
 //---------------------------------------------------------------------------------------------------------
 //
 //    Odometer PlugIn Implementation
@@ -117,15 +118,15 @@ wxString GetInstrumentCaption(unsigned int id) {
         case ID_DBP_I_DEPART:
             return _("Departure & Arrival");
         case ID_DBP_I_ARRIV:
-            return _("");
+            return wxEmptyString;
         case ID_DBP_I_LEGDIST:
             return _("Leg Distance & Time");
         case ID_DBP_I_LEGTIME:
-            return _("");
+            return wxEmptyString;
         case ID_DBP_B_LEGRES:
             return _("Reset Leg");
 		default:
-			return _T("");
+			return wxEmptyString;
     }
 }
 
@@ -175,7 +176,7 @@ odometer_pi::~odometer_pi(void) {
 
 // Initialize the Odometer
 int odometer_pi::Init(void) {
-    AddLocaleCatalog(_T("opencpn-odometer_pi"));
+    AddLocaleCatalog(_T("opencpn-gpsodometer_pi"));
 
     // Used at startup, once started the plugin only uses version 2 configuration style
     m_config_version = -1;
@@ -197,13 +198,13 @@ int odometer_pi::Init(void) {
     LoadConfig();
 
     // Scaleable Vector Graphics (SVG) icons are stored in the following path.
-//	wxString shareLocn = GetPluginDataDir("odometer_pi") +  _T("/data/");
+//	wxString shareLocn = GetPluginDataDir("gpsodometer_pi") +  _T("/data/");
 
-    wxString iconFolder = GetPluginDataDir("gps-odometer_pi") + wxFileName::GetPathSeparator() + _T("data") + wxFileName::GetPathSeparator();
+    wxString iconFolder = GetPluginDataDir("gpsodometer_pi") + wxFileName::GetPathSeparator() + _T("data") + wxFileName::GetPathSeparator();
 
-    wxString normalIcon = iconFolder + _T("gps-odometer.svg");
-    wxString toggledIcon = iconFolder + _T("gps-odometer_toggled.svg");
-    wxString rolloverIcon = iconFolder + _T("gps-odometer_rollover.svg");
+    wxString normalIcon = iconFolder + _T("gpsodometer.svg");
+    wxString toggledIcon = iconFolder + _T("gpsodometer_toggled.svg");
+    wxString rolloverIcon = iconFolder + _T("gpsodometer_rollover.svg");
  
     // For journeyman styles, we prefer the built-in raster icons which match the rest of the toolbar.
 /*
@@ -272,6 +273,24 @@ void odometer_pi::Notify()
 	    odometer_window->Refresh();
 	}
 
+    //  Manage the watchdogs, watch messages used
+    mGGA_Watchdog--;
+    if( mGGA_Watchdog <= 0 ) {
+        GPSQuality = 0;
+        mGGA_Watchdog = gps_watchdog_timeout_ticks;
+    }
+
+    mGSV_Watchdog--;
+    if( mGSV_Watchdog <= 0 ) {
+        mSatsInView = m_NMEA0183.Gsv.SatsInView;
+        mGSV_Watchdog = gps_watchdog_timeout_ticks;
+    }
+
+    mRMC_Watchdog--;
+    if( mRMC_Watchdog <= 0 ) {
+        SendSentenceToAllInstruments( OCPN_DBP_STC_SOG, NAN, _T("-") );
+        mRMC_Watchdog = gps_watchdog_timeout_ticks;
+    }
 }
 
 int odometer_pi::GetAPIVersionMajor() {
@@ -328,20 +347,31 @@ void odometer_pi::SetNMEASentence(wxString &sentence)
         if( m_NMEA0183.LastSentenceIDReceived == _T("GGA") ) {
             if( m_NMEA0183.Parse() ) {
                 GPSQuality = m_NMEA0183.Gga.GPSQuality;
+                mGGA_Watchdog = gps_watchdog_timeout_ticks;
             }
         }
 
+        // GSV is currently not used.
+        else if( m_NMEA0183.LastSentenceIDReceived == _T("GSV") ) {
+            if( m_NMEA0183.Parse() ) {
+                mSatsInView = m_NMEA0183.Gsv.SatsInView;
+                mGSV_Watchdog = gps_watchdog_timeout_ticks;
+            }
+        }
+        
         else if (m_NMEA0183.LastSentenceIDReceived == _T("RMC")) {
             if (m_NMEA0183.Parse() ) {
                 if( m_NMEA0183.Rmc.IsDataValid == NTrue ) {
 
-                    // If GGA is missing or invalid you may get random values. Minimize the risk for error.
+                    /* If GGA is missing or invalid you may get random values. 
+                       Minimize the risk for error.  */
+
                     if ((GPSQuality < 5) && (GPSQuality > 0 )) {
 
                         // With SOG filter function
                         SendSentenceToAllInstruments( OCPN_DBP_STC_SOG,
-                            toUsrSpeed_Plugin( mSOGFilter.filter(m_NMEA0183.Rmc.SpeedOverGroundKnots), g_iOdoSpeedUnit ),
-                            getUsrSpeedUnit_Plugin( g_iOdoSpeedUnit ) );
+                            toUsrSpeed_Plugin( mSOGFilter.filter(m_NMEA0183.Rmc.SpeedOverGroundKnots),
+                                g_iOdoSpeedUnit ), getUsrSpeedUnit_Plugin( g_iOdoSpeedUnit ) );
 
                         // Need filterad speed as variable
                         CurrSpeed = toUsrSpeed_Plugin( mSOGFilter.filter(m_NMEA0183.Rmc.SpeedOverGroundKnots) );
@@ -349,14 +379,14 @@ void odometer_pi::SetNMEASentence(wxString &sentence)
                         // Date and time are wxStrings, instruments use double
                         dt = m_NMEA0183.Rmc.Date + m_NMEA0183.Rmc.UTCTime;
                         mUTCDateTime.ParseFormat( dt.c_str(), _T("%d%m%y%H%M%S") );
+                        mRMC_Watchdog = gps_watchdog_timeout_ticks;
                     }
                 }
             }
         } 
     }
 
-    /* If GGA is missing or invalid you may get random values. Minimize the risk for error.
-       NOTE: A lost GGA during a trip will not update the m_NMEA0183.Gga.GPSQuality value BUG?  */
+    /* If GGA is missing or invalid you may get random values. Minimize the risk for error. */
 
     if ((GPSQuality >= 5) || (GPSQuality <= 0 )) {
         GPSQuality = 0; 
@@ -379,8 +409,8 @@ void odometer_pi::Odometer() {
         m_ArrTime = LocalTime.Format(wxT("%F %T"));
     }
 
-    /* TODO: There must be a better way to receive the reset event from 'OdometerInstrument_Button' 
-             but using a global variable for transfer.  */
+    /* TODO: There must be a better way to receive the reset event from
+             'OdometerInstrument_Button' but using a global variable for transfer.  */
     if (g_iResetTrip == 1) {                             
         SetDepTime = 1;
         UseSavedDepTime = 0;
@@ -619,19 +649,21 @@ void odometer_pi::ShowPreferencesDialog(wxWindow* parent) {
         // Update panel size
         wxSize sz = cont->m_pOdometerWindow->GetMinSize(); 
 
-        /* TODO: These sizes are forced as dialog size and instruments messes up totally otherwise, probably due
-                 to the use of checkboxes instead of general selection. It is not perfect and should eventually 
-                 be fixed somehow.
-                 The height does not always compute properly. Sometimes need to restart plugin or OpenCPN to resize.
-                 Button width = 150, then add dialog frame = 10 incl slight margin. This is the key! */  
+        /* TODO: These sizes are forced as dialog size and instruments messes up totally
+                 otherwise, probably due to the use of checkboxes instead of general selection.
+                 It is not perfect and should eventually be fixed somehow.
+                 The height does not always compute properly. Sometimes need to restart plugin 
+                 or OpenCPN to resize. Button width = 150, then add dialog frame = 10 incl slight
+                 margin. 
+                 This is not perfect but better than the line above, should maybe be reworked! */  
 
-        sz.Set(160,125);  // Size when only displaying Total distance, Trip distance and Trip reset.
+        sz.Set(160,125);  // Minimum size with Total distance, Trip distance and Trip reset.
         if (g_iShowSpeed == 1) sz.IncBy(0,170);       // Add for Speed instrument
         if (g_iShowDepArrTimes == 1) sz.IncBy(0,50);  // Add for departure/arrival times
         if (g_iShowTripLeg == 1) sz.IncBy(0,85);      // Add for trip dist, time and reset
 
         pane.MinSize(sz).BestSize(sz).FloatingSize(sz);
-        m_pauimgr->Update();
+//        m_pauimgr->Update();
 
 		// OnClose should handle that for us normally but it doesn't seems to do so
 		// We must save changes first
@@ -642,8 +674,8 @@ void odometer_pi::ShowPreferencesDialog(wxWindow* parent) {
 		ApplyConfig();
 		SaveConfig();   // TODO: Does not save configuration file
 
-		// Not exactly sure what this does. Pesumably if no odometers are displayed, the toolbar icon 
-        // is toggled/untoggled??
+		// Not exactly sure what this does. Pesumably if no odometers are displayed, the 
+        // toolbar icon is toggled/untoggled??
 		SetToolbarItemState(m_toolbar_item_id, GetOdometerWindowShownCount() != 0);
 	}
 
@@ -795,42 +827,35 @@ void odometer_pi::UpdateAuiStatus(void) {
 
 // Loads a saved configuration
 bool odometer_pi::LoadConfig(void) {
+
     wxFileConfig *pConf = (wxFileConfig *) m_pconfig;
 
     if (pConf) {
-        pConf->SetPath(_T("/PlugIns/libodometer_pi.so"));
+        pConf->SetPath(_T("/PlugIns/GPS-Odometer"));
 
         wxString version;
         pConf->Read(_T("Version"), &version, wxEmptyString);
-        
-		// Load the font configuration, note reuse of config variable
 		wxString config;
+
+        // Set some sensible defaults
+        wxString TitleFont;
+        wxString DataFont;
+        wxString LabelFont;
+        wxString SmallFont;
+        
         pConf->Read(_T("FontTitle"), &config, wxEmptyString);
-		
-		if (!config.IsEmpty()) {
-			g_pFontTitle->SetNativeFontInfo(config);
-		}
-        
+		LoadFont(&g_pFontTitle, config);
+
 		pConf->Read(_T("FontData"), &config, wxEmptyString);
-        
-		if (!config.IsEmpty()) {
-			g_pFontData->SetNativeFontInfo(config);
-		}
+        LoadFont(&g_pFontData, config);
         
 		pConf->Read(_T("FontLabel"), &config, wxEmptyString);
+		LoadFont(&g_pFontLabel, config);
 		
-		if (!config.IsEmpty()) {
-			g_pFontLabel->SetNativeFontInfo(config);
-		
-		}
         pConf->Read(_T("FontSmall"), &config, wxEmptyString);
+		LoadFont(&g_pFontSmall, config);
 		
-		if (!config.IsEmpty()) {
-			g_pFontSmall->SetNativeFontInfo(config);
-		}
-
 		// Load the dedicated odometer settings plus set default values
-
         pConf->Read( _T("TotalDistance"), &m_TotDist, "0.0");  
         pConf->Read( _T("TripDistance"), &m_TripDist, "0.0");
         pConf->Read( _T("LegDistance"), &m_LegDist, "0.0");
@@ -848,10 +873,11 @@ bool odometer_pi::LoadConfig(void) {
         int d_cnt;
         pConf->Read(_T("OdometerCount"), &d_cnt, -1);
       
-	// TODO: Memory leak? We should destroy everything first
+        // TODO: Memory leak? We should destroy everything first
         m_ArrayOfOdometerWindow.Clear();
-	// A version 1 configuration does not include a version value
         if (version.IsEmpty() && d_cnt == -1) {
+
+        /* TODO Version 1 never generated in OpenCPN 5.0 or later, section shall be removed
             m_config_version = 1;
             // Let's load version 1 or default settings.
             int i_cnt;
@@ -863,8 +889,9 @@ bool odometer_pi::LoadConfig(void) {
                     pConf->Read(wxString::Format(_T("Instrument%d"), i + 1), &id, -1);
                     if (id != -1) ar.Add(id);
                 }
-            } else {
-                // Load the default instrument list, do not change thje order!
+            } else {  
+            */
+                // Load the default instrument list, do not change this order!
                 ar.Add( ID_DBP_D_SOG );
                 ar.Add( ID_DBP_I_SUMLOG );
                 ar.Add( ID_DBP_I_TRIPLOG );
@@ -874,9 +901,9 @@ bool odometer_pi::LoadConfig(void) {
                 ar.Add( ID_DBP_I_LEGDIST );
                 ar.Add( ID_DBP_I_LEGTIME );
                 ar.Add( ID_DBP_B_LEGRES ); 
-            }
+            // }
 	    
-	    // Note generate a unique GUID for each odometer container
+	        // Note generate a unique GUID for each odometer container
             OdometerWindowContainer *cont = new OdometerWindowContainer(NULL, MakeName(), _("GPS Odometer"), _T("V"), ar);
             m_ArrayOfOdometerWindow.Add(cont);
             cont->m_bPersVisible = true;
@@ -891,8 +918,8 @@ bool odometer_pi::LoadConfig(void) {
             wxString caption;
             pConf->Read(_T("Caption"), &caption, _("Odometer"));
             wxString orient = "V";
-            int i_cnt;
-            pConf->Read(_T("InstrumentCount"), &i_cnt, -1);
+//            int i_cnt;
+//            pConf->Read(_T("InstrumentCount"), &i_cnt, -1);
             bool b_persist;
             pConf->Read(_T("Persistence"), &b_persist, 0);
             bool b_speedo;
@@ -902,12 +929,16 @@ bool odometer_pi::LoadConfig(void) {
             bool b_tripleg;
             pConf->Read( _T("ShowTripLeg"), &b_tripleg, 1);
 
+            // Allways 9 numerically ordered instruments in the array
             wxArrayInt ar;
-            for (int i = 0; i < i_cnt; i++) {
-                int id;
-                pConf->Read(wxString::Format(_T("Instrument%d"), i + 1), &id, -1);
-                if (id != -1) ar.Add(id);
-            }
+            for (int i = 0; i < 9; i++) {
+                ar.Add(i);
+
+//                int id;
+                /* Do not read from config, the order is fixed
+                pConf->Read(wxString::Format(_T("Instrument%d"), i + 1), &id, -1); 
+                if (id != -1) ar.Add(id);   */
+            } 
 
 			// TODO: Do not add if GetCount == 0
 
@@ -944,8 +975,13 @@ bool odometer_pi::LoadConfig(void) {
         return false;
 }
 
-// Save the current configuration
-// Note this is a version 2 configuration
+void odometer_pi::LoadFont(wxFont **target, wxString native_info)
+{
+    if( !native_info.IsEmpty() ){
+        (*target)->SetNativeFontInfo( native_info );
+    }
+}
+
 bool odometer_pi::SaveConfig(void) {
 
     /* TODO: Does not save when called from 'odometer_pi::ShowPreferencesDialog' (or several 
@@ -954,7 +990,7 @@ bool odometer_pi::SaveConfig(void) {
     wxFileConfig *pConf = (wxFileConfig *) m_pconfig;
 
     if (pConf) {
-        pConf->SetPath(_T("/PlugIns/libodometer_pi.so"));
+        pConf->SetPath(_T("/PlugIns/GPS-Odometer"));
         pConf->Write(_T("Version"), _T("2"));
         pConf->Write(_T("FontTitle"), g_pFontTitle->GetNativeFontInfoDesc());
         pConf->Write(_T("FontData"), g_pFontData->GetNativeFontInfoDesc());
@@ -982,11 +1018,12 @@ bool odometer_pi::SaveConfig(void) {
         pConf->Write(_T("ShowSpeedometer"), cont->m_bShowSpeed);
         pConf->Write(_T("ShowDepArrTimes"), cont->m_bShowDepArrTimes);
         pConf->Write(_T("ShowTripLeg"), cont->m_bShowTripLeg);
+/*
         pConf->Write(_T("InstrumentCount"), (int) cont->m_aInstrumentList.GetCount());
 	    for (unsigned int j = 0; j < cont->m_aInstrumentList.GetCount(); j++) {
     		pConf->Write(wxString::Format(_T("Instrument%d"), j + 1), cont->m_aInstrumentList.Item(j));
 	    }
-
+*/
 
     return true;
 	} else {
@@ -1001,9 +1038,7 @@ void odometer_pi::ApplyConfig(void) {
     // Reverse order to handle deletes
     for (size_t i = m_ArrayOfOdometerWindow.GetCount(); i > 0; i--) {
         OdometerWindowContainer *cont = m_ArrayOfOdometerWindow.Item(i - 1);
-        // Always '0' (Vertical) 
-        int orient = 0 ;
-
+        int orient = 0 ;   // Always vertical ('0')
         if(!cont->m_pOdometerWindow) {  
             // A new odometer is created
             cont->m_pOdometerWindow = new OdometerWindow(GetOCPNCanvasWindow(), wxID_ANY,
@@ -1026,22 +1061,20 @@ void odometer_pi::ApplyConfig(void) {
 
         } else {  
             // Update the current odometer
-
             wxAuiPaneInfo& pane = m_pauimgr->GetPane(cont->m_pOdometerWindow);
             pane.Caption(cont->m_sCaption).Show(cont->m_bIsVisible);
             if (!cont->m_pOdometerWindow->isInstrumentListEqual(cont->m_aInstrumentList)) {
-          
                 cont->m_pOdometerWindow->SetInstrumentList(cont->m_aInstrumentList);
                 wxSize sz = cont->m_pOdometerWindow->GetMinSize();
                 pane.MinSize(sz).BestSize(sz).FloatingSize(sz);
             }
             if (cont->m_pOdometerWindow->GetSizerOrientation() != orient) {
                 cont->m_pOdometerWindow->ChangePaneOrientation(orient, false);
-            }   
+            }
         }
     }
     m_pauimgr->Update();
-    }
+}
 
 void odometer_pi::PopulateContextMenu(wxMenu* menu) {
     OdometerWindowContainer *cont = m_ArrayOfOdometerWindow.Item(0);
@@ -1226,7 +1259,7 @@ OdometerPreferencesDialog::OdometerPreferencesDialog(wxWindow *parent, wxWindowI
     itemBoxSizerMainPanel->Add(DialogButtonSizer, 0, wxALIGN_RIGHT | wxALL, 5);
 
     /* NOTE: These are not preferences settings items, there are no change options in Odometer 
-             besides the ones used when toggning Show checkboxes. */ 
+             besides the ones used when toggling show checkboxes. */ 
     m_pListCtrlOdometers = new wxListCtrl( this , wxID_ANY, wxDefaultPosition, wxSize(0, 0),
          wxLC_REPORT | wxLC_NO_HEADER | wxLC_SINGLE_SEL);
     m_pListCtrlInstruments = new wxListCtrl( this, wxID_ANY, wxDefaultPosition, wxSize( 0, 0 ),
@@ -1235,7 +1268,8 @@ OdometerPreferencesDialog::OdometerPreferencesDialog(wxWindow *parent, wxWindowI
 
 
     UpdateOdometerButtonsState();
-    SetMinSize(wxSize(450, -1));
+//    SetMinSize(wxSize(450, -1));
+    SetMinSize(wxSize(200, -1));
     Fit();
 }
 
@@ -1259,9 +1293,12 @@ void OdometerPreferencesDialog::SaveOdometerConfig(void) {
     cont->m_bShowDepArrTimes = m_pCheckBoxShowDepArrTimes->IsChecked();
     cont->m_bShowTripLeg = m_pCheckBoxShowTripLeg->IsChecked();
     cont->m_sCaption = m_pTextCtrlCaption->GetValue();
+
+    /* Do not regenreate the array, reorders the instruments on Windows (only!)
     cont->m_aInstrumentList.Clear();
     for (int i = 0; i < m_pListCtrlInstruments->GetItemCount(); i++)
         cont->m_aInstrumentList.Add((int) m_pListCtrlInstruments->GetItemData(i));
+     */
 }
 
 void OdometerPreferencesDialog::OnOdometerSelected(wxListEvent& event) {
@@ -1319,6 +1356,12 @@ OdometerWindow::OdometerWindow(wxWindow *pparent, wxWindowID id, wxAuiManager *a
             this);
     Connect(wxEVT_COMMAND_MENU_SELECTED,
             wxCommandEventHandler(OdometerWindow::OnContextMenuSelect), NULL, this);
+
+    Hide();
+    
+    m_binResize = false;
+    m_binPinch = false;
+    
 }
 
 OdometerWindow::~OdometerWindow() {
@@ -1334,6 +1377,10 @@ void OdometerWindow::OnSize(wxSizeEvent& event) {
         OdometerInstrument* inst = m_ArrayOfInstrument.Item(i)->m_pInstrument;
         inst->SetMinSize(inst->GetSize(itemBoxSizer->GetOrientation(), GetClientSize()));
     }
+    // TODO: Better handling of size after repetitive closing of preferences (almost ok)
+    SetMinSize(wxDefaultSize);
+    Fit();
+    SetMinSize(itemBoxSizer->GetMinSize());
     Layout();
     Refresh();
 }
@@ -1343,27 +1390,27 @@ void OdometerWindow::OnContextMenu(wxContextMenuEvent& event) {
 
     wxAuiPaneInfo &pane = m_pauimgr->GetPane(this);
     if (pane.IsOk() && pane.IsDocked()) {
-        contextMenu->Append(ID_DASH_UNDOCK, _("Undock"));
+        contextMenu->Append(ID_ODO_UNDOCK, _("Undock"));
     }
-    contextMenu->Append(ID_DASH_PREFS, _("Preferences ..."));
+    contextMenu->Append(ID_ODO_PREFS, _("Preferences ..."));
     PopupMenu(contextMenu);
     delete contextMenu;
 }
 
 void OdometerWindow::OnContextMenuSelect(wxCommandEvent& event) {
-    if (event.GetId() < ID_DASH_PREFS) { 
+    if (event.GetId() < ID_ODO_PREFS) { 
 	// Toggle odometer visibility
         m_plugin->ShowOdometer(event.GetId()-1, event.IsChecked());
         SetToolbarItemState(m_plugin->GetToolbarItemId(), m_plugin->GetOdometerWindowShownCount() != 0);
     }
 
     switch(event.GetId()) {
-        case ID_DASH_PREFS: {
+        case ID_ODO_PREFS: {
             m_plugin->ShowPreferencesDialog(this);
             return; // Does it's own save.
         }
 
-        case ID_DASH_UNDOCK: {
+        case ID_ODO_UNDOCK: {
             ChangePaneOrientation(GetSizerOrientation(), true);
             return;     // Nothing changed so nothing need be saved
         }
@@ -1394,6 +1441,7 @@ void OdometerWindow::ChangePaneOrientation(int orient, bool updateAUImgr) {
         m_Container->m_sCaption).CaptionVisible(true).TopDockable(!vertical).BottomDockable(
         !vertical).LeftDockable(vertical).RightDockable(vertical).MinSize(sz).BestSize(
         sz).FloatingSize(sz).FloatingPosition(100, 100).Float().Show(m_Container->m_bIsVisible));
+
     if (updateAUImgr) m_pauimgr->Update();
 }
 

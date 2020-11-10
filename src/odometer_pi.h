@@ -65,8 +65,10 @@ class OdometerInstrumentContainer;
 // Request default positioning of toolbar tool
 #define ODOMETER_TOOL_POSITION -1          
 
+#define gps_watchdog_timeout_ticks  10
+
 // If no data received in 5 seconds, zero the instrument displays
-#define WATCHDOG_TIMEOUT_COUNT  5
+// #define WATCHDOG_TIMEOUT_COUNT  5
 
 class OdometerWindowContainer {
 public:
@@ -167,7 +169,11 @@ public:
 
 private:
 	// Load plugin configuraton
+    wxArrayInt ar;
+//    void DefineInstrumentOrder(wxArrayInt ar);
 	bool LoadConfig(void);
+    void LoadFont(wxFont **target, wxString native_info);
+
 	void ApplyConfig(void);
 	// Send deconstructed NMEA 1083 sentence  values to each display
 	void SendSentenceToAllInstruments(int st, double value, wxString unit);
@@ -189,9 +195,11 @@ private:
     short mPriDateTime;
     wxDateTime mUTCDateTime;
     iirfilter mSOGFilter;
-//    double mSatsInView;
-    int SatsInUse;
+    int mSatsInView;
     int GPSQuality;
+    int mRMC_Watchdog;
+    int mGGA_Watchdog;
+    int mGSV_Watchdog;
 
     // Odometer time
     wxDateTime UTCTime;
@@ -250,6 +258,7 @@ public:
 	void OnOdometerSelected(wxListEvent& event);
 	void OnInstrumentSelected(wxListEvent& event);
 	void SaveOdometerConfig(void);
+    void RecalculateSize( void );
 
 	wxArrayOfOdometer m_Config;
 	wxFontPickerCtrl *m_pFontPickerTitle;
@@ -295,10 +304,10 @@ enum {
 };
 
 enum {
-	ID_DASH_PREFS = 999,
-	ID_DASH_VERTICAL,
-	ID_DASH_HORIZONTAL,
-	ID_DASH_UNDOCK
+	ID_ODO_PREFS = 999,
+//	ID_DASH_VERTICAL,
+//	ID_DASH_HORIZONTAL,
+	ID_ODO_UNDOCK
 };
 
 enum {
@@ -334,6 +343,15 @@ public:
 	// TODO: OnKeyPress pass event to main window or disable focus
 
     OdometerWindowContainer *m_Container;
+
+    bool m_binPinch;
+    bool m_binPan;
+    
+    wxPoint m_resizeStartPoint;
+    wxSize m_resizeStartSize;
+    bool m_binResize;
+    bool m_binResize2;
+
 
 private:
 	wxAuiManager *m_pauimgr;
